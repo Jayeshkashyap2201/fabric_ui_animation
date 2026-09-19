@@ -19,11 +19,7 @@ Add this package to your project's `pubspec.yaml`:
 ```yaml
 dependencies:
   fabric_ui_animation: ^1.0.0
-💻 How to Use
-Wrap any widget inside FabricEffect to bring it to life!
-
-Dart
-import 'package:flutter/material.dart';
+💻 How to UseWrap any widget inside FabricEffect to bring it to life!Dartimport 'package:flutter/material.dart';
 import 'package:fabric_ui_animation/fabric_ui_animation.dart';
 
 class FabricExample extends StatelessWidget {
@@ -51,17 +47,4 @@ class FabricExample extends StatelessWidget {
     );
   }
 }
-👨‍💻 Author / Developer
-Developed with ️ by Jayesh Kashyap
-
-Email: jayeshkashyap2201@gmail.com
-
-GitHub: https://github.com/Jayeshkashyap2201
-
-⚠️ Important Notes
-Opaque Background: Ensure your wrapped child widget has an opaque background (e.g., using a solid color Container), otherwise transparent areas might appear during screen capture.
-
-Scrollable Views: If used inside scrollable elements, set startOnLongPress: true to prevent pan gesture conflicts with vertical scrolling.
-
-📄 License
-This project is licensed under the MIT License - see the LICENSE file for details.
+⚠️ Important NotesOpaque Background: Ensure your wrapped child widget has an opaque background (e.g., using a solid color Container), otherwise transparent areas might appear during screen capture.Scrollable Views: If used inside scrollable elements, set startOnLongProfile: true (or startOnLongPress: true) to prevent pan gesture conflicts with vertical scrolling.📄 LicenseThis project is licensed under the MIT License - see the LICENSE file for details.👨‍💻 Author / DeveloperDeveloped with ❤️ by Jayesh KashyapEmail: jayeshkashyap2201@gmail.com   GitHub: https://github.com/Jayeshkashyap2201   
