@@ -16,7 +16,7 @@ A 3D cloth physics simulation package for Flutter. Transform any rigid UI widget
 
 Add this package to your project's `pubspec.yaml`:
 
-```yaml
+yaml
 dependencies:
   fabric_ui_animation: ^1.0.0
 💻 How to UseWrap any widget inside FabricEffect to bring it to life!Dartimport 'package:flutter/material.dart';
