@@ -3,6 +3,119 @@ import 'dart:typed_data';
 
 enum SpringKind { structural, shear, bend }
 
+/// All the "stretchiness" knobs in one place. Pass a custom instance to
+/// [FabricSimulation] to make the cloth feel softer/stiffer, or use one of
+/// the presets below. All fields have sensible defaults, so you only need
+/// to override what you want to change.
+class FabricElasticity {
+  /// Resistance of the grid edges to stretching. 1.0 = rigid-ish, lower =
+  /// stretchier fabric (silk-like).
+  final double structuralStiffness;
+
+  /// Resistance to shearing (diagonal springs) - keeps squares from
+  /// collapsing into slivers when pulled sideways.
+  final double shearStiffness;
+
+  /// Resistance to folding (springs that skip one node) - higher keeps the
+  /// sheet flatter and less crumply.
+  final double bendStiffness;
+
+  /// Velocity damping per step. Closer to 1.0 = less energy lost, so the
+  /// cloth swings/settles longer.
+  final double damping;
+
+  /// Extra damping only on the depth (z) axis.
+  final double zDamping;
+
+  /// How strongly gravity pulls once the cloth is released, in logical
+  /// px/s^2. Higher = falls faster.
+  final double gravity;
+
+  /// Per-step speed cap, prevents the simulation exploding on a big jump.
+  final double maxSpeed;
+
+  /// How strongly an un-grabbed, un-torn node eases back to its resting
+  /// x/y position every step (only while still pinned to the wall).
+  final double homeXY;
+
+  /// How strongly a node's depth relaxes back to flat every step.
+  final double homeZ;
+
+  /// How strongly a grabbed node is pulled toward the finger (0..1).
+  /// Higher = fabric feels "stuck" to your finger; lower = more slippery.
+  final double holdStrength;
+
+  /// Constraint-solver iterations per step. Higher = stiffer, more
+  /// accurate, more expensive.
+  final int iterations;
+
+  const FabricElasticity({
+    this.structuralStiffness = 1.0,
+    this.shearStiffness = 0.8,
+    this.bendStiffness = 0.25,
+    this.damping = 0.985,
+    this.zDamping = 0.97,
+    this.gravity = 4000.0,
+    this.maxSpeed = 60.0,
+    this.homeXY = 0.004,
+    this.homeZ = 0.02,
+    this.holdStrength = 0.5,
+    this.iterations = 5,
+  });
+
+  /// Default feel used when nothing is specified - matches the original
+  /// cotton-sheet-like behaviour.
+  static const FabricElasticity standard = FabricElasticity();
+
+  /// Loose, stretchy, silk-like cloth. Sags and jiggles more.
+  static const FabricElasticity soft = FabricElasticity(
+    structuralStiffness: 0.55,
+    shearStiffness: 0.45,
+    bendStiffness: 0.10,
+    damping: 0.992,
+    holdStrength: 0.38,
+    iterations: 4,
+  );
+
+  /// Taut, canvas/denim-like cloth. Resists stretching, tears less easily.
+  static const FabricElasticity stiff = FabricElasticity(
+    structuralStiffness: 1.0,
+    shearStiffness: 0.95,
+    bendStiffness: 0.45,
+    damping: 0.96,
+    holdStrength: 0.68,
+    iterations: 7,
+  );
+
+  FabricElasticity copyWith({
+    double? structuralStiffness,
+    double? shearStiffness,
+    double? bendStiffness,
+    double? damping,
+    double? zDamping,
+    double? gravity,
+    double? maxSpeed,
+    double? homeXY,
+    double? homeZ,
+    double? holdStrength,
+    int? iterations,
+  }) {
+    return FabricElasticity(
+      structuralStiffness: structuralStiffness ?? this.structuralStiffness,
+      shearStiffness: shearStiffness ?? this.shearStiffness,
+      bendStiffness: bendStiffness ?? this.bendStiffness,
+      damping: damping ?? this.damping,
+      zDamping: zDamping ?? this.zDamping,
+      gravity: gravity ?? this.gravity,
+      maxSpeed: maxSpeed ?? this.maxSpeed,
+      homeXY: homeXY ?? this.homeXY,
+      homeZ: homeZ ?? this.homeZ,
+      holdStrength: holdStrength ?? this.holdStrength,
+      iterations: iterations ?? this.iterations,
+    );
+  }
+}
+
 /// One node of the cloth. Simulated in 3D: x/y are screen axes,
 /// z points towards the viewer (negative z = pushed into the screen).
 class PointMass {
@@ -116,14 +229,8 @@ class FabricSimulation {
   /// feel is identical on 60 Hz and 120 Hz screens).
   static const double timeStep = 1.0 / 60.0;
 
-  static const int _iterations = 5;
-  static const double _damping = 0.985;
-  static const double _zDamping = 0.97;
-  static const double _gravity = 4000.0; // logical px / s^2
-  static const double _maxSpeed = 60.0; // px per step
-  static const double _homeXY = 0.004; // tiny pull back to the wall
-  static const double _homeZ = 0.02; // flattens leftover wrinkles
-  static const double _holdStrength = 0.5;
+  /// Stretchiness / stiffness / damping - see [FabricElasticity].
+  final FabricElasticity elasticity;
 
   final double width;
   final double height;
@@ -165,6 +272,26 @@ class FabricSimulation {
   double _grabY = 0.0;
   double _pushDepth = 0.0;
 
+  /// Fired the first time a spring gives way (good hook for a "rip" sound).
+  void Function()? onTear;
+
+  /// Fired every time a pin lets go of the wall (good hook for a "pop"/
+  /// "snap" sound).
+  void Function()? onPinBreak;
+
+  /// How many springs have torn so far.
+  int tornCount = 0;
+
+  /// How many pins have let go of the wall so far.
+  int pinsBrokenCount = 0;
+
+  double? _crumpleX;
+  double? _crumpleY;
+  double _crumpleStrength = 0.07;
+
+  /// True while [beginCrumple] is active.
+  bool get isCrumpling => _crumpleX != null;
+
   FabricSimulation({
     required this.width,
     required this.height,
@@ -172,6 +299,7 @@ class FabricSimulation {
     required this.rows,
     this.tearRatio = 3.2,
     this.pinBreakRatio = 2.0,
+    this.elasticity = const FabricElasticity(),
   })  : assert(cols >= 3 && rows >= 3),
         assert(cols * rows <= 65535) {
     _generateGrid();
@@ -208,10 +336,12 @@ class FabricSimulation {
     for (int y = 0; y < rows; y++) {
       for (int x = 0; x < cols; x++) {
         if (x < cols - 1) {
-          _horizontal.add(register(Spring(at(x, y), at(x + 1, y))));
+          _horizontal.add(register(Spring(at(x, y), at(x + 1, y),
+              stiffness: elasticity.structuralStiffness)));
         }
         if (y < rows - 1) {
-          _vertical.add(register(Spring(at(x, y), at(x, y + 1))));
+          _vertical.add(register(Spring(at(x, y), at(x, y + 1),
+              stiffness: elasticity.structuralStiffness)));
         }
       }
     }
@@ -220,9 +350,9 @@ class FabricSimulation {
     for (int y = 0; y < rows - 1; y++) {
       for (int x = 0; x < cols - 1; x++) {
         _diagA.add(register(Spring(at(x, y), at(x + 1, y + 1),
-            stiffness: 0.8, kind: SpringKind.shear)));
+            stiffness: elasticity.shearStiffness, kind: SpringKind.shear)));
         _diagB.add(register(Spring(at(x + 1, y), at(x, y + 1),
-            stiffness: 0.8, kind: SpringKind.shear)));
+            stiffness: elasticity.shearStiffness, kind: SpringKind.shear)));
       }
     }
 
@@ -233,7 +363,7 @@ class FabricSimulation {
           _bend.add(register(Spring(
             at(x, y),
             at(x + 2, y),
-            stiffness: 0.25,
+            stiffness: elasticity.bendStiffness,
             kind: SpringKind.bend,
             dependsOnA: _horizontal[y * (cols - 1) + x],
             dependsOnB: _horizontal[y * (cols - 1) + x + 1],
@@ -243,7 +373,7 @@ class FabricSimulation {
           _bend.add(register(Spring(
             at(x, y),
             at(x, y + 2),
-            stiffness: 0.25,
+            stiffness: elasticity.bendStiffness,
             kind: SpringKind.bend,
             dependsOnA: _vertical[y * cols + x],
             dependsOnB: _vertical[(y + 1) * cols + x],
@@ -298,11 +428,78 @@ class FabricSimulation {
   void _applyGrab() {
     for (final PointMass node in _held) {
       if (node.isPinned) continue;
-      final double k = node.hold * _holdStrength;
+      final double k = node.hold * elasticity.holdStrength;
       node.x += (_grabX + node.holdDx - node.x) * k;
       node.y += (_grabY + node.holdDy - node.y) * k;
       node.z += (-_pushDepth * node.hold - node.z) * k;
     }
+  }
+
+  // -------------------------------------------------------------- crumple
+
+  /// Crumples the whole sheet toward ([targetX], [targetY]) - in the same
+  /// local coordinate space as everything else here - like paper being
+  /// crushed into a ball. Keeps whatever tearing/dropped pins already
+  /// happened (it just keeps pulling on top of the current shape); call
+  /// [endCrumple] to stop, or throw the simulation away (reset) once done.
+  /// [strength] is how much of the remaining distance each solver
+  /// iteration closes - higher balls it up faster.
+  void beginCrumple(double targetX, double targetY, {double strength = 0.07}) {
+    _crumpleX = targetX;
+    _crumpleY = targetY;
+    _crumpleStrength = strength;
+    gravityOn = true; // never springs back flat once crumpled
+    endGrab();
+    for (final PointMass node in _pinNodes) {
+      node.isPinned = false;
+    }
+  }
+
+  void endCrumple() {
+    _crumpleX = null;
+    _crumpleY = null;
+  }
+
+  void _applyCrumple() {
+    final double? tx = _crumpleX;
+    final double? ty = _crumpleY;
+    if (tx == null || ty == null) return;
+    final double k = _crumpleStrength;
+
+    for (final PointMass node in nodes) {
+      if (node.isPinned) continue;
+      final double dx = tx - node.x;
+      final double dy = ty - node.y;
+      final double dist = math.sqrt(dx * dx + dy * dy) + 1e-3;
+
+      node.x += dx * k;
+      node.y += dy * k;
+
+      // A little tangential twist so the sheet scrunches into a wad
+      // instead of collapsing straight into a flat point.
+      final double tangentialX = -dy / dist;
+      final double tangentialY = dx / dist;
+      final double twist = dist * k * 0.35;
+      node.x += tangentialX * twist;
+      node.y += tangentialY * twist;
+    }
+  }
+
+  /// Once-per-step (not per iteration) depth bunching, so the crumpled
+  /// wad gets real volume instead of flattening into a dot.
+  void _applyCrumpleBunching() {
+    if (_crumpleX == null) return;
+    for (final PointMass node in nodes) {
+      if (node.isPinned) continue;
+      final double noise = _pseudoRandom(node.originalX, node.originalY);
+      node.z += (0.3 + noise * 1.4) * 2.2;
+      node.z *= 0.985;
+    }
+  }
+
+  static double _pseudoRandom(double x, double y) {
+    final double s = math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+    return s - s.floorToDouble();
   }
 
   // ------------------------------------------------------------- pin release
@@ -345,30 +542,36 @@ class FabricSimulation {
     _integrate();
 
     final int count = springs.length;
-    for (int it = 0; it < _iterations; it++) {
+    for (int it = 0; it < elasticity.iterations; it++) {
       for (int i = 0; i < count; i++) {
         springs[i].satisfy();
       }
       _applyGrab();
+      _applyCrumple();
     }
+    _applyCrumpleBunching();
 
     _breakOverstretched();
     _measureMotion();
   }
 
   void _integrate() {
-    final double g = gravityOn ? _gravity * timeStep * timeStep : 0.0;
+    final double g =
+    gravityOn ? elasticity.gravity * timeStep * timeStep : 0.0;
+    final double damping = elasticity.damping;
+    final double zDamping = elasticity.zDamping;
+    final double maxSpeed = elasticity.maxSpeed;
 
     for (final PointMass node in nodes) {
       if (node.isPinned) continue;
 
-      double vx = (node.x - node.oldX) * _damping;
-      double vy = (node.y - node.oldY) * _damping;
-      double vz = (node.z - node.oldZ) * _damping * _zDamping;
+      double vx = (node.x - node.oldX) * damping;
+      double vy = (node.y - node.oldY) * damping;
+      double vz = (node.z - node.oldZ) * damping * zDamping;
 
       final double speed = math.sqrt(vx * vx + vy * vy + vz * vz);
-      if (speed > _maxSpeed) {
-        final double f = _maxSpeed / speed;
+      if (speed > maxSpeed) {
+        final double f = maxSpeed / speed;
         vx *= f;
         vy *= f;
         vz *= f;
@@ -384,10 +587,10 @@ class FabricSimulation {
 
       if (node.hold == 0.0) {
         if (!gravityOn) {
-          node.x += (node.originalX - node.x) * _homeXY;
-          node.y += (node.originalY - node.y) * _homeXY;
+          node.x += (node.originalX - node.x) * elasticity.homeXY;
+          node.y += (node.originalY - node.y) * elasticity.homeXY;
         }
-        node.z -= node.z * _homeZ;
+        node.z -= node.z * elasticity.homeZ;
       }
     }
   }
@@ -403,6 +606,8 @@ class FabricSimulation {
         if (!spring.isTorn && spring.isOverstretched(pinBreakRatio)) {
           node.isPinned = false;
           changed = true;
+          pinsBrokenCount++;
+          onPinBreak?.call();
           break;
         }
       }
@@ -414,6 +619,8 @@ class FabricSimulation {
         spring.isTorn = true;
         changed = true;
         torn = true;
+        tornCount++;
+        onTear?.call();
       }
     }
 

@@ -2,7 +2,7 @@ name: fabric_ui_animation
 
 description: A 3D cloth physics simulation widget for Flutter. Grab, pull, stretch, and tear the UI with dynamic lighting and Verlet integration. # 60 se 180 characters ke beech hona chahiye
 
-version: 1.0.0
+version: 1.0.1
 
 homepage: https://github.com/Jayeshkashyap2201
 

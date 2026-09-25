@@ -9,16 +9,109 @@ import 'package:flutter/scheduler.dart';
 import '../fabric_painter.dart';
 import '../physics.dart';
 
-/// Lets you trigger the same actions as the "PULL THE PINS" / "RESET" buttons
-/// from outside the widget.
+/// Optional callbacks so you can trigger your own sound effects (or haptics)
+/// at the right moments. All are null (silent) by default - wire up
+/// whichever ones you want, e.g. with `audioplayers` or `SystemSound.play`.
+class FabricSounds {
+  /// Called the moment a touch first grabs the cloth.
+  final VoidCallback? onGrab;
+
+  /// Called every time a spring tears (a hole/rip opens).
+  final VoidCallback? onTear;
+
+  /// Called every time a pin lets go of the wall.
+  final VoidCallback? onPinBreak;
+
+  /// Called once the cloth has fully stopped moving after being torn or
+  /// released (good for a soft "thud" as it settles).
+  final VoidCallback? onSettle;
+
+  const FabricSounds({
+    this.onGrab,
+    this.onTear,
+    this.onPinBreak,
+    this.onSettle,
+  });
+}
+
+/// Lets you trigger the same actions as buttons from outside the widget:
+/// pull the pins (with speed control), drop every pin at once, shrink the
+/// whole thing away, bring it back, or put the real widget back.
 class FabricController {
   _FabricEffectState? _state;
 
-  /// The pins let go one by one and the sheet falls off the wall.
-  void releasePins() => _state?._releasePins();
+  /// The pins let go one after another (a "peel off the wall" wave) and the
+  /// sheet falls. [speed] controls how spread out that wave is - shorter
+  /// duration = pins let go closer together = a snappier drop.
+  /// Pass [simultaneous]: true (or call [dropAllPins]) to release every pin
+  /// on the same frame instead of a wave.
+  void releasePins({
+    Duration speed = const Duration(milliseconds: 750),
+    bool simultaneous = false,
+  }) =>
+      _state?._releasePins(speed: speed, simultaneous: simultaneous);
 
-  /// Puts the real widget back (cloth is thrown away).
+  /// Every pin lets go on the same frame - the whole sheet drops at once.
+  /// [speed] only affects how quickly it's considered "released" for
+  /// bookkeeping; the fall speed itself comes from `elasticity.gravity`.
+  void dropAllPins({Duration speed = const Duration(milliseconds: 300)}) =>
+      _state?._releasePins(speed: speed, simultaneous: true);
+
+  /// Crushes the whole widget toward a point - like paper being crumpled
+  /// into a ball - then leaves it there (pair with a fade via [collapse],
+  /// or just call this and then [reset] once you're done showing it).
+  /// Give the point either as [originKey] (crumples toward that widget's
+  /// centre - handy: pass the GlobalKey of the button that triggered this)
+  /// or [origin] (a raw screen/global position). If neither is given, it
+  /// crumples toward its own centre. Keeps whatever tearing/dropped pins
+  /// already happened. Await the result (or pass [onComplete]) to know
+  /// when the crumple has finished playing out.
+  Future<void> crumple({
+    GlobalKey? originKey,
+    Offset? origin,
+    Duration duration = const Duration(milliseconds: 500),
+    VoidCallback? onComplete,
+  }) async {
+    await _state?._crumple(
+      originKey: originKey,
+      origin: origin,
+      duration: duration,
+    );
+    onComplete?.call();
+  }
+
+  /// Puts the real widget back (cloth is thrown away) and shows it at full
+  /// size again (undoes any [collapse]).
   void reset() => _state?._reset();
+
+  /// Shrinks the whole widget down to nothing and fades it out - a quick
+  /// "close" / "dismiss" animation independent of the cloth physics.
+  /// [duration] is the speed of the animation. Call [expand] or [reset] to
+  /// bring it back. Await the returned future to know when it's finished
+  /// (e.g. to then pop a route or swap content), or pass [onComplete].
+  Future<void> collapse({
+    Duration duration = const Duration(milliseconds: 420),
+    Curve curve = Curves.easeInCubic,
+    VoidCallback? onComplete,
+  }) async {
+    await _state?._collapse(duration: duration, curve: curve);
+    onComplete?.call();
+  }
+
+  /// Reverse of [collapse]: grows back from nothing to full size and fades
+  /// in. Useful when returning to a screen you previously [collapse]d.
+  Future<void> expand({
+    Duration duration = const Duration(milliseconds: 420),
+    Curve curve = Curves.easeOutCubic,
+    VoidCallback? onComplete,
+  }) async {
+    await _state?._expand(duration: duration, curve: curve);
+    onComplete?.call();
+  }
+
+  /// Snaps back to fully shown with no animation (e.g. before reusing the
+  /// widget after a [collapse]).
+  void resetTransition() => _state?._resetTransition();
 
   /// True while the cloth (instead of the live widget) is on screen.
   bool get isActive => _state?._active ?? false;
@@ -32,6 +125,21 @@ class FabricEffect extends StatefulWidget {
   final Widget? backdrop;
 
   final FabricController? controller;
+
+  /// Stretchiness / stiffness / damping. Defaults to [FabricElasticity.standard].
+  /// Try [FabricElasticity.soft] or [FabricElasticity.stiff] for a different
+  /// feel, or build a custom one.
+  final FabricElasticity elasticity;
+
+  /// Shadow/highlight colors for the fold lighting. Defaults to
+  /// [FabricTheme.dark]; use [FabricTheme.light] (or
+  /// `FabricTheme.forBrightness(Theme.of(context).brightness)`) for
+  /// light-themed screens.
+  final FabricTheme theme;
+
+  /// Optional sound-effect hooks (grab / tear / pin-break / settle). Silent
+  /// by default.
+  final FabricSounds? sounds;
 
   /// Nodes across. Rows are derived from the widget's aspect ratio unless
   /// [gridRows] is given.
@@ -61,6 +169,9 @@ class FabricEffect extends StatefulWidget {
     required this.child,
     this.backdrop,
     this.controller,
+    this.elasticity = const FabricElasticity(),
+    this.theme = const FabricTheme(),
+    this.sounds,
     this.gridColumns = 24,
     this.gridRows,
     this.grabRadius = 48.0,
@@ -76,7 +187,7 @@ class FabricEffect extends StatefulWidget {
 }
 
 class _FabricEffectState extends State<FabricEffect>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final GlobalKey _boundaryKey = GlobalKey();
   final ValueNotifier<int> _frame = ValueNotifier<int>(0);
 
@@ -93,6 +204,14 @@ class _FabricEffectState extends State<FabricEffect>
   Duration _lastElapsed = Duration.zero;
   double _accumulator = 0.0;
   int _calmFrames = 0;
+
+  /// Drives the shrink-to-vanish / grow-back animation. 1.0 = full size and
+  /// opaque (normal), 0.0 = fully collapsed and invisible.
+  late final AnimationController _transitionController = AnimationController(
+    vsync: this,
+    value: 1.0,
+    duration: const Duration(milliseconds: 420),
+  );
 
   @override
   void initState() {
@@ -115,6 +234,7 @@ class _FabricEffectState extends State<FabricEffect>
     widget.controller?._state = null;
     _ticker.stop();
     _ticker.dispose();
+    _transitionController.dispose();
     _frame.dispose();
     _image?.dispose();
     super.dispose();
@@ -172,7 +292,10 @@ class _FabricEffectState extends State<FabricEffect>
     // showing the cloth until reset().
     if (sim.gravityOn && sim.motion < 0.01) {
       _calmFrames++;
-      if (_calmFrames > 30) _ticker.stop();
+      if (_calmFrames > 30) {
+        _ticker.stop();
+        widget.sounds?.onSettle?.call();
+      }
     } else {
       _calmFrames = 0;
     }
@@ -215,7 +338,10 @@ class _FabricEffectState extends State<FabricEffect>
           rows: rows,
           tearRatio: widget.tearRatio,
           pinBreakRatio: widget.pinBreakRatio,
-        );
+          elasticity: widget.elasticity,
+        )
+          ..onTear = widget.sounds?.onTear
+          ..onPinBreak = widget.sounds?.onPinBreak;
         _active = true;
       });
       _startTicker();
@@ -241,13 +367,83 @@ class _FabricEffectState extends State<FabricEffect>
     }
   }
 
-  void _reset() => _restoreLiveChild();
+  void _reset() {
+    _restoreLiveChild();
+    _transitionController.value = 1.0;
+  }
 
-  Future<void> _releasePins() async {
+  Future<void> _releasePins({
+    required Duration speed,
+    required bool simultaneous,
+  }) async {
     if (!await _ensureSimulation()) return;
-    _simulation?.releasePins();
+    // ~60 steps/sec: turn the requested speed into how spread out the pin
+    // release wave is. 0 duration (or simultaneous) drops every pin at once.
+    final int spreadFrames = simultaneous
+        ? 0
+        : (speed.inMilliseconds / (1000 / 60)).round().clamp(0, 600);
+    _simulation?.releasePins(spreadFrames: spreadFrames);
     _startTicker();
   }
+
+  Future<void> _crumple({
+    GlobalKey? originKey,
+    Offset? origin,
+    required Duration duration,
+  }) async {
+    if (!await _ensureSimulation()) return;
+    final RenderBox? boundaryBox =
+    _boundaryKey.currentContext?.findRenderObject() as RenderBox?;
+    if (boundaryBox == null || !boundaryBox.attached) return;
+
+    Offset globalTarget;
+    final RenderBox? keyBox =
+    originKey?.currentContext?.findRenderObject() as RenderBox?;
+    if (keyBox != null && keyBox.attached) {
+      globalTarget = keyBox.localToGlobal(keyBox.size.center(Offset.zero));
+    } else if (origin != null) {
+      globalTarget = origin;
+    } else {
+      globalTarget = boundaryBox.localToGlobal(boundaryBox.size.center(Offset.zero));
+    }
+
+    final Offset local = boundaryBox.globalToLocal(globalTarget);
+    _simulation?.beginCrumple(local.dx, local.dy);
+    _startTicker();
+
+    // Crossfade to nothing during the tail end, so it visually balls up
+    // and vanishes together rather than lingering as a tiny flat wad.
+    final Duration fade =
+    Duration(milliseconds: (duration.inMilliseconds * 0.55).round());
+    final Duration holdBeforeFade = duration - fade;
+    if (holdBeforeFade > Duration.zero) {
+      await Future<void>.delayed(holdBeforeFade);
+    }
+    if (!mounted) return;
+    _transitionController.duration =
+    fade > Duration.zero ? fade : const Duration(milliseconds: 1);
+    await _transitionController.animateTo(0.0, curve: Curves.easeIn);
+  }
+
+  // --------------------------------------------------------- shrink/vanish
+
+  Future<void> _collapse({
+    required Duration duration,
+    required Curve curve,
+  }) async {
+    _transitionController.duration = duration;
+    await _transitionController.animateTo(0.0, curve: curve);
+  }
+
+  Future<void> _expand({
+    required Duration duration,
+    required Curve curve,
+  }) async {
+    _transitionController.duration = duration;
+    await _transitionController.animateTo(1.0, curve: curve);
+  }
+
+  void _resetTransition() => _transitionController.value = 1.0;
 
   // ------------------------------------------------------------------ touch
 
@@ -268,12 +464,13 @@ class _FabricEffectState extends State<FabricEffect>
   void _grab() {
     final FabricSimulation? sim = _simulation;
     if (sim == null) return;
-    sim.beginGrab(
+    final bool grabbed = sim.beginGrab(
       _pointer.dx,
       _pointer.dy,
       radius: widget.grabRadius,
       pushDepth: widget.pushDepth,
     );
+    if (grabbed) widget.sounds?.onGrab?.call();
     _startTicker();
   }
 
@@ -295,7 +492,7 @@ class _FabricEffectState extends State<FabricEffect>
     final FabricSimulation? sim = _simulation;
     final ui.Image? image = _image;
 
-    return GestureDetector(
+    final Widget content = GestureDetector(
       behavior: HitTestBehavior.opaque,
       dragStartBehavior: DragStartBehavior.down,
       onPanStart: longPress ? null : (d) => _onDown(d.localPosition),
@@ -334,6 +531,7 @@ class _FabricEffectState extends State<FabricEffect>
                   sim,
                   image,
                   devicePixelRatio: _pixelRatio,
+                  theme: widget.theme,
                   repaint: _frame,
                 ),
               ),
@@ -342,6 +540,22 @@ class _FabricEffectState extends State<FabricEffect>
           ),
         ],
       ),
+    );
+
+    // Shrink-to-vanish overlay. Cheap to keep in the tree: at value == 1.0
+    // (the default, untouched state) this is a plain, unscaled, fully
+    // opaque passthrough.
+    return AnimatedBuilder(
+      animation: _transitionController,
+      builder: (BuildContext context, Widget? child) {
+        final double t = _transitionController.value;
+        if (t >= 1.0) return child!;
+        return Opacity(
+          opacity: t.clamp(0.0, 1.0),
+          child: Transform.scale(scale: t, child: child),
+        );
+      },
+      child: content,
     );
   }
 }

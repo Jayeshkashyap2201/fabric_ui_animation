@@ -7,4 +7,5 @@ library;
 
 export 'fabric_painter.dart';
 export 'physics.dart';
-export 'widget/fabric_widget.dart';
+export 'widget/fabric_effect.dart';
+export 'widget/page_curl.dart';
