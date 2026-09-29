@@ -1,13 +1,11 @@
 name: fabric_ui_animation
-
-description: A 3D cloth physics simulation widget for Flutter. Grab, pull, stretch, and tear the UI with dynamic lighting and Verlet integration. # 60 se 180 characters ke beech hona chahiye
-
-version: 1.0.1
-
-homepage: https://github.com/Jayeshkashyap2201
+description: Cloth-like UI effects for Flutter - grab, stretch, tear, crumple, drop the pins, and turn pages like a book.
+version: 0.2.0
+publish_to: none
 
 environment:
-  sdk: ^3.12.2
+  sdk: ">=3.4.0 <4.0.0"
+  flutter: ">=3.27.0"
 
 dependencies:
   flutter:
@@ -16,5 +14,6 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_lints: ^4.0.0
 
-  flutter_lints: ^6.0.0
+flutter:

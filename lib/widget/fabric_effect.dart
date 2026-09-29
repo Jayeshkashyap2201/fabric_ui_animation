@@ -6,164 +6,81 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 
+import 'crumple.dart';
+import 'fabric_elasticity.dart';
 import '../fabric_painter.dart';
 import '../physics.dart';
+import 'pin_release.dart';
+import 'fabric_sounds.dart';
+import 'theme.dart';
+import 'trigger.dart';
 
-/// Optional callbacks so you can trigger your own sound effects (or haptics)
-/// at the right moments. All are null (silent) by default - wire up
-/// whichever ones you want, e.g. with `audioplayers` or `SystemSound.play`.
-class FabricSounds {
-  /// Called the moment a touch first grabs the cloth.
-  final VoidCallback? onGrab;
-
-  /// Called every time a spring tears (a hole/rip opens).
-  final VoidCallback? onTear;
-
-  /// Called every time a pin lets go of the wall.
-  final VoidCallback? onPinBreak;
-
-  /// Called once the cloth has fully stopped moving after being torn or
-  /// released (good for a soft "thud" as it settles).
-  final VoidCallback? onSettle;
-
-  const FabricSounds({
-    this.onGrab,
-    this.onTear,
-    this.onPinBreak,
-    this.onSettle,
-  });
-}
-
-/// Lets you trigger the same actions as buttons from outside the widget:
-/// pull the pins (with speed control), drop every pin at once, shrink the
-/// whole thing away, bring it back, or put the real widget back.
+/// Lets you trigger the same actions as gestures/buttons from outside the
+/// widget: pull the pins, drop every pin at once, crumple, shrink the whole
+/// thing away, bring it back, or put the real widget back.
+///
+/// Every method that takes `options` uses the widget's own options
+/// (`FabricEffect.crumple` / `FabricEffect.pins`) when you leave it out.
 class FabricController {
   _FabricEffectState? _state;
 
-  /// The pins let go one after another (a "peel off the wall" wave) and the
-  /// sheet falls. [speed] controls how spread out that wave is - shorter
-  /// duration = pins let go closer together = a snappier drop.
-  /// Pass [simultaneous]: true (or call [dropAllPins]) to release every pin
-  /// on the same frame instead of a wave.
-  void releasePins({
-    Duration speed = const Duration(milliseconds: 750),
-    bool simultaneous = false,
-  }) =>
-      _state?._releasePins(speed: speed, simultaneous: simultaneous);
-
-  /// Every pin lets go on the same frame - the whole sheet drops at once.
-  /// [speed] only affects how quickly it's considered "released" for
-  /// bookkeeping; the fall speed itself comes from `elasticity.gravity`.
-  void dropAllPins({Duration speed = const Duration(milliseconds: 300)}) =>
-      _state?._releasePins(speed: speed, simultaneous: true);
-
-  /// Crushes the whole widget toward a point - like paper being crumpled
-  /// into a ball - then leaves it there (pair with a fade via [collapse],
-  /// or just call this and then [reset] once you're done showing it).
-  /// Give the point either as [originKey] (crumples toward that widget's
-  /// centre - handy: pass the GlobalKey of the button that triggered this)
-  /// or [origin] (a raw screen/global position). If neither is given, it
-  /// crumples toward its own centre. Keeps whatever tearing/dropped pins
-  /// already happened. Await the result (or pass [onComplete]) to know
-  /// when the crumple has finished playing out.
-  Future<void> crumple({
-    GlobalKey? originKey,
-    Offset? origin,
-    Duration duration = const Duration(milliseconds: 500),
-    VoidCallback? onComplete,
-  }) async {
-    await _state?._crumple(
-      originKey: originKey,
-      origin: origin,
-      duration: duration,
-    );
-    onComplete?.call();
+  /// The pins let go one after another (a "peel off the wall" wave).
+  Future<void> releasePins({PinOptions? options}) async {
+    await _state?._releasePins(options: options);
   }
 
-  /// Puts the real widget back (cloth is thrown away) and shows it at full
-  /// size again (undoes any [collapse]).
+  /// Every pin lets go on the same frame - the whole sheet drops at once.
+  Future<void> dropAllPins({PinOptions? options}) async {
+    await _state?._releasePins(options: options, forceAll: true);
+  }
+
+  /// Crushes the widget toward a point like paper being crumpled into a
+  /// ball, then fades it out. The point is [originKey]'s widget centre
+  /// (pass the key of the button that triggered this), or [origin] (a
+  /// global position); with neither it crumples toward its own centre.
+  /// Keeps whatever tearing / dropped pins already happened.
+  Future<void> crumple({
+    CrumpleOptions? options,
+    GlobalKey? originKey,
+    Offset? origin,
+  }) async {
+    await _state?._crumple(
+      options: options,
+      originKey: originKey,
+      origin: origin,
+    );
+  }
+
+  /// Puts the real widget back (cloth thrown away) at full size.
   void reset() => _state?._reset();
 
-  /// Shrinks the whole widget down to nothing and fades it out - a quick
-  /// "close" / "dismiss" animation independent of the cloth physics.
-  /// [duration] is the speed of the animation. Call [expand] or [reset] to
-  /// bring it back. Await the returned future to know when it's finished
-  /// (e.g. to then pop a route or swap content), or pass [onComplete].
+  /// Shrinks the whole widget to nothing and fades it out.
   Future<void> collapse({
     Duration duration = const Duration(milliseconds: 420),
     Curve curve = Curves.easeInCubic,
-    VoidCallback? onComplete,
   }) async {
     await _state?._collapse(duration: duration, curve: curve);
-    onComplete?.call();
   }
 
-  /// Reverse of [collapse]: grows back from nothing to full size and fades
-  /// in. Useful when returning to a screen you previously [collapse]d.
+  /// Reverse of [collapse]: grows back to full size.
   Future<void> expand({
     Duration duration = const Duration(milliseconds: 420),
     Curve curve = Curves.easeOutCubic,
-    VoidCallback? onComplete,
   }) async {
     await _state?._expand(duration: duration, curve: curve);
-    onComplete?.call();
   }
 
-  /// Snaps back to fully shown with no animation (e.g. before reusing the
-  /// widget after a [collapse]).
+  /// Snaps back to fully shown, no animation.
   void resetTransition() => _state?._resetTransition();
 
   /// True while the cloth (instead of the live widget) is on screen.
   bool get isActive => _state?._active ?? false;
 }
 
+/// Wraps any widget so it behaves like a piece of cloth: grab, pull, stretch,
+/// tear it - and, if you pass the matching options, crumple it or pull its
+/// pins straight from a gesture, with no extra code.
 class FabricEffect extends StatefulWidget {
-  final Widget child;
-
-  /// Shown behind the cloth once it is torn / released
-  /// (e.g. "You pulled the screen off the wall.").
-  final Widget? backdrop;
-
-  final FabricController? controller;
-
-  /// Stretchiness / stiffness / damping. Defaults to [FabricElasticity.standard].
-  /// Try [FabricElasticity.soft] or [FabricElasticity.stiff] for a different
-  /// feel, or build a custom one.
-  final FabricElasticity elasticity;
-
-  /// Shadow/highlight colors for the fold lighting. Defaults to
-  /// [FabricTheme.dark]; use [FabricTheme.light] (or
-  /// `FabricTheme.forBrightness(Theme.of(context).brightness)`) for
-  /// light-themed screens.
-  final FabricTheme theme;
-
-  /// Optional sound-effect hooks (grab / tear / pin-break / settle). Silent
-  /// by default.
-  final FabricSounds? sounds;
-
-  /// Nodes across. Rows are derived from the widget's aspect ratio unless
-  /// [gridRows] is given.
-  final int gridColumns;
-  final int? gridRows;
-
-  /// Size of the area your finger grabs, in logical pixels.
-  final double grabRadius;
-
-  /// How deep the finger pushes into the cloth, in logical pixels.
-  final double pushDepth;
-
-  /// Spring tears above this stretch (x rest length). Higher = harder to rip.
-  final double tearRatio;
-
-  /// Pin lets go above this stretch. Higher = harder to peel off the wall.
-  final double pinBreakRatio;
-
-  /// Use a long-press to start (recommended when [child] scrolls or has taps
-  /// that must keep working with a normal drag).
-  final bool startOnLongPress;
-
-  final bool enabled;
-
   const FabricEffect({
     super.key,
     required this.child,
@@ -172,6 +89,8 @@ class FabricEffect extends StatefulWidget {
     this.elasticity = const FabricElasticity(),
     this.theme = const FabricTheme(),
     this.sounds,
+    this.crumple,
+    this.pins,
     this.gridColumns = 24,
     this.gridRows,
     this.grabRadius = 48.0,
@@ -181,6 +100,54 @@ class FabricEffect extends StatefulWidget {
     this.startOnLongPress = false,
     this.enabled = true,
   });
+
+  final Widget child;
+
+  /// Shown behind the cloth once it is torn / released.
+  final Widget? backdrop;
+
+  final FabricController? controller;
+
+  /// Stretchiness / stiffness / damping. See [FabricElasticity.soft] and
+  /// [FabricElasticity.stiff] for presets.
+  final FabricElasticity elasticity;
+
+  /// Shadow / highlight colours. Use [FabricTheme.light] on light screens.
+  final FabricTheme theme;
+
+  /// Sound / haptic hooks. Silent when null.
+  final FabricSounds? sounds;
+
+  /// Crumple settings. When given (and its `trigger` isn't `none`) the widget
+  /// crumples toward the touch point on that gesture by itself.
+  final CrumpleOptions? crumple;
+
+  /// Pin-release settings. When given (and its `trigger` isn't `none`) the
+  /// widget releases its pins on that gesture by itself.
+  final PinOptions? pins;
+
+  /// Nodes across. Rows follow the aspect ratio unless [gridRows] is set.
+  final int gridColumns;
+  final int? gridRows;
+
+  /// Size of the area your finger grabs, in logical pixels.
+  final double grabRadius;
+
+  /// How deep the finger pushes into the cloth.
+  final double pushDepth;
+
+  /// A spring tears above this stretch (x rest length).
+  final double tearRatio;
+
+  /// A pin lets go above this stretch.
+  final double pinBreakRatio;
+
+  /// Start grabbing with a long-press instead of a plain drag (use when the
+  /// child scrolls). A `crumple`/`pins` trigger set to `longPress` is
+  /// ignored while this is true.
+  final bool startOnLongPress;
+
+  final bool enabled;
 
   @override
   State<FabricEffect> createState() => _FabricEffectState();
@@ -200,24 +167,43 @@ class _FabricEffectState extends State<FabricEffect>
   bool _starting = false; // capture in progress
   bool _pointerDown = false;
   Offset _pointer = Offset.zero;
+  Offset _lastDoubleTapPosition = Offset.zero;
 
   Duration _lastElapsed = Duration.zero;
   double _accumulator = 0.0;
   int _calmFrames = 0;
+  final List<VoidCallback> _settleCallbacks = <VoidCallback>[];
 
-  /// Drives the shrink-to-vanish / grow-back animation. 1.0 = full size and
-  /// opaque (normal), 0.0 = fully collapsed and invisible.
+  /// Drives collapse / expand / the crumple fade-out.
+  /// 1.0 = full size and opaque (normal), 0.0 = gone.
   late final AnimationController _transitionController = AnimationController(
     vsync: this,
     value: 1.0,
     duration: const Duration(milliseconds: 420),
   );
 
+  /// Where the shrink-to-vanish animation scales toward. Defaults to the
+  /// widget's own centre; a crumple moves this to the point it was
+  /// triggered from, so the vanish finishes exactly there instead of at
+  /// the widget's centre.
+  Alignment _transitionOrigin = Alignment.center;
+
   @override
   void initState() {
     super.initState();
     _ticker = createTicker(_onTick);
     widget.controller?._state = this;
+    assert(() {
+      final FabricTrigger c = widget.crumple?.trigger ?? FabricTrigger.none;
+      final FabricTrigger p = widget.pins?.trigger ?? FabricTrigger.none;
+      if (c != FabricTrigger.none && c == p) {
+        throw FlutterError(
+          'FabricEffect: crumple and pins are both set to trigger on $c. '
+              'Give each a different trigger (or FabricTrigger.none).',
+        );
+      }
+      return true;
+    }());
   }
 
   @override
@@ -295,6 +281,12 @@ class _FabricEffectState extends State<FabricEffect>
       if (_calmFrames > 30) {
         _ticker.stop();
         widget.sounds?.onSettle?.call();
+        final List<VoidCallback> callbacks =
+        List<VoidCallback>.of(_settleCallbacks);
+        _settleCallbacks.clear();
+        for (final VoidCallback callback in callbacks) {
+          callback();
+        }
       }
     } else {
       _calmFrames = 0;
@@ -347,7 +339,7 @@ class _FabricEffectState extends State<FabricEffect>
       _startTicker();
       return true;
     } catch (_) {
-      return false; // e.g. boundary was still dirty - just try again on next touch
+      return false; // e.g. boundary was still dirty - just try again
     } finally {
       _starting = false;
     }
@@ -356,6 +348,7 @@ class _FabricEffectState extends State<FabricEffect>
   void _restoreLiveChild() {
     _ticker.stop();
     _simulation?.endGrab();
+    _settleCallbacks.clear();
     final ui.Image? oldImage = _image;
     _simulation = null;
     _image = null;
@@ -369,60 +362,119 @@ class _FabricEffectState extends State<FabricEffect>
 
   void _reset() {
     _restoreLiveChild();
+    _transitionOrigin = Alignment.center;
     _transitionController.value = 1.0;
   }
 
-  Future<void> _releasePins({
-    required Duration speed,
-    required bool simultaneous,
-  }) async {
-    if (!await _ensureSimulation()) return;
-    // ~60 steps/sec: turn the requested speed into how spread out the pin
-    // release wave is. 0 duration (or simultaneous) drops every pin at once.
-    final int spreadFrames = simultaneous
-        ? 0
-        : (speed.inMilliseconds / (1000 / 60)).round().clamp(0, 600);
-    _simulation?.releasePins(spreadFrames: spreadFrames);
-    _startTicker();
+  /// Puts the widget back and grows it in again.
+  Future<void> _autoReset(Duration? delay) async {
+    if (delay == null) return;
+    await Future<void>.delayed(delay);
+    if (!mounted) return;
+    _restoreLiveChild();
+    _transitionOrigin = Alignment.center;
+    _transitionController.value = 0.0;
+    await _transitionController.animateTo(
+      1.0,
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOutCubic,
+    );
   }
 
-  Future<void> _crumple({
-    GlobalKey? originKey,
-    Offset? origin,
-    required Duration duration,
-  }) async {
+  // ----------------------------------------------------------------- pins
+
+  Future<void> _releasePins({PinOptions? options, bool forceAll = false}) async {
+    final PinOptions o = options ?? widget.pins ?? const PinOptions();
     if (!await _ensureSimulation()) return;
-    final RenderBox? boundaryBox =
-    _boundaryKey.currentContext?.findRenderObject() as RenderBox?;
-    if (boundaryBox == null || !boundaryBox.attached) return;
+    final FabricSimulation? sim = _simulation;
+    if (sim == null) return;
 
-    Offset globalTarget;
-    final RenderBox? keyBox =
-    originKey?.currentContext?.findRenderObject() as RenderBox?;
-    if (keyBox != null && keyBox.attached) {
-      globalTarget = keyBox.localToGlobal(keyBox.size.center(Offset.zero));
-    } else if (origin != null) {
-      globalTarget = origin;
-    } else {
-      globalTarget = boundaryBox.localToGlobal(boundaryBox.size.center(Offset.zero));
-    }
-
-    final Offset local = boundaryBox.globalToLocal(globalTarget);
-    _simulation?.beginCrumple(local.dx, local.dy);
+    final PinReleaseForce force =
+    PinReleaseForce(options: o, forceAllAtOnce: forceAll);
+    force.start(sim);
+    sim.addForce(force);
+    widget.sounds?.onPinsReleased?.call();
     _startTicker();
 
-    // Crossfade to nothing during the tail end, so it visually balls up
-    // and vanishes together rather than lingering as a tiny flat wad.
-    final Duration fade =
-    Duration(milliseconds: (duration.inMilliseconds * 0.55).round());
-    final Duration holdBeforeFade = duration - fade;
-    if (holdBeforeFade > Duration.zero) {
-      await Future<void>.delayed(holdBeforeFade);
+    _settleCallbacks.add(() {
+      o.onComplete?.call();
+      _autoReset(o.autoResetAfter);
+    });
+  }
+
+  // -------------------------------------------------------------- crumple
+
+  Future<void> _crumple({
+    CrumpleOptions? options,
+    GlobalKey? originKey,
+    Offset? origin,
+    Offset? localOrigin,
+  }) async {
+    final CrumpleOptions o = options ?? widget.crumple ?? const CrumpleOptions();
+    if (!await _ensureSimulation()) return;
+    final FabricSimulation? sim = _simulation;
+    if (sim == null) return;
+
+    Offset local;
+    if (localOrigin != null) {
+      // A gesture that landed on this widget - already in local space.
+      local = localOrigin;
+    } else {
+      final RenderBox? boundaryBox =
+      _boundaryKey.currentContext?.findRenderObject() as RenderBox?;
+      if (boundaryBox == null || !boundaryBox.attached) return;
+
+      Offset globalTarget;
+      final RenderBox? keyBox =
+      originKey?.currentContext?.findRenderObject() as RenderBox?;
+      if (keyBox != null && keyBox.attached) {
+        globalTarget = keyBox.localToGlobal(keyBox.size.center(Offset.zero));
+      } else if (origin != null) {
+        globalTarget = origin;
+      } else {
+        globalTarget =
+            boundaryBox.localToGlobal(boundaryBox.size.center(Offset.zero));
+      }
+      local = boundaryBox.globalToLocal(globalTarget);
+    }
+
+    // The vanish animation scales toward this point instead of the
+    // widget's centre, so it visually finishes right where it was
+    // triggered from (e.g. the button that called it).
+    _transitionOrigin = Alignment(
+      (local.dx / sim.width) * 2 - 1,
+      (local.dy / sim.height) * 2 - 1,
+    );
+
+    final CrumpleForce force = CrumpleForce(
+      targetX: local.dx,
+      targetY: local.dy,
+      options: o,
+    );
+    force.start(sim);
+    sim.addForce(force);
+    widget.sounds?.onCrumple?.call();
+    _startTicker();
+
+    // Fade out during the tail end, so it balls up and vanishes together.
+    final int totalMs = o.duration.inMilliseconds;
+    final int fadeMs = (totalMs * o.fadeFraction.clamp(0.0, 1.0)).round();
+    final int holdMs = totalMs - fadeMs;
+    if (holdMs > 0) {
+      await Future<void>.delayed(Duration(milliseconds: holdMs));
+    }
+    // Someone reset / replaced the simulation meanwhile - stop here.
+    if (!mounted || _simulation != sim) return;
+
+    if (fadeMs > 0) {
+      _transitionController.duration = Duration(milliseconds: fadeMs);
+      await _transitionController.animateTo(0.0, curve: Curves.easeIn);
+    } else {
+      _transitionController.value = 0.0;
     }
     if (!mounted) return;
-    _transitionController.duration =
-    fade > Duration.zero ? fade : const Duration(milliseconds: 1);
-    await _transitionController.animateTo(0.0, curve: Curves.easeIn);
+    o.onComplete?.call();
+    await _autoReset(o.autoResetAfter);
   }
 
   // --------------------------------------------------------- shrink/vanish
@@ -431,6 +483,7 @@ class _FabricEffectState extends State<FabricEffect>
     required Duration duration,
     required Curve curve,
   }) async {
+    _transitionOrigin = Alignment.center;
     _transitionController.duration = duration;
     await _transitionController.animateTo(0.0, curve: curve);
   }
@@ -439,13 +492,27 @@ class _FabricEffectState extends State<FabricEffect>
     required Duration duration,
     required Curve curve,
   }) async {
+    _transitionOrigin = Alignment.center;
     _transitionController.duration = duration;
     await _transitionController.animateTo(1.0, curve: curve);
   }
 
   void _resetTransition() => _transitionController.value = 1.0;
 
-  // ------------------------------------------------------------------ touch
+  // ------------------------------------------------------------- gestures
+
+  void _onAutoTrigger(FabricTrigger trigger, Offset local) {
+    if (!widget.enabled) return;
+    final CrumpleOptions? c = widget.crumple;
+    if (c != null && c.trigger == trigger) {
+      _crumple(localOrigin: local);
+      return;
+    }
+    final PinOptions? p = widget.pins;
+    if (p != null && p.trigger == trigger) {
+      _releasePins();
+    }
+  }
 
   void _onDown(Offset position) {
     if (!widget.enabled) return;
@@ -488,22 +555,46 @@ class _FabricEffectState extends State<FabricEffect>
 
   @override
   Widget build(BuildContext context) {
-    final bool longPress = widget.startOnLongPress;
     final FabricSimulation? sim = _simulation;
     final ui.Image? image = _image;
+
+    final bool grabByLongPress = widget.startOnLongPress;
+    final FabricTrigger crumpleTrigger =
+        widget.crumple?.trigger ?? FabricTrigger.none;
+    final FabricTrigger pinsTrigger = widget.pins?.trigger ?? FabricTrigger.none;
+
+    final bool autoLongPress = !grabByLongPress &&
+        (crumpleTrigger == FabricTrigger.longPress ||
+            pinsTrigger == FabricTrigger.longPress);
+    final bool autoDoubleTap = crumpleTrigger == FabricTrigger.doubleTap ||
+        pinsTrigger == FabricTrigger.doubleTap;
 
     final Widget content = GestureDetector(
       behavior: HitTestBehavior.opaque,
       dragStartBehavior: DragStartBehavior.down,
-      onPanStart: longPress ? null : (d) => _onDown(d.localPosition),
-      onPanUpdate: longPress ? null : (d) => _onMove(d.localPosition),
-      onPanEnd: longPress ? null : (_) => _onUp(),
-      onPanCancel: longPress ? null : _onUp,
-      onLongPressStart: longPress ? (d) => _onDown(d.localPosition) : null,
+      onPanStart: grabByLongPress ? null : (d) => _onDown(d.localPosition),
+      onPanUpdate: grabByLongPress ? null : (d) => _onMove(d.localPosition),
+      onPanEnd: grabByLongPress ? null : (_) => _onUp(),
+      onPanCancel: grabByLongPress ? null : _onUp,
+      onDoubleTapDown: autoDoubleTap
+          ? (TapDownDetails d) => _lastDoubleTapPosition = d.localPosition
+          : null,
+      onDoubleTap: autoDoubleTap
+          ? () => _onAutoTrigger(FabricTrigger.doubleTap, _lastDoubleTapPosition)
+          : null,
+      onLongPressStart: (grabByLongPress || autoLongPress)
+          ? (LongPressStartDetails d) {
+        if (grabByLongPress) {
+          _onDown(d.localPosition);
+        } else {
+          _onAutoTrigger(FabricTrigger.longPress, d.localPosition);
+        }
+      }
+          : null,
       onLongPressMoveUpdate:
-      longPress ? (d) => _onMove(d.localPosition) : null,
-      onLongPressEnd: longPress ? (_) => _onUp() : null,
-      onLongPressCancel: longPress ? _onUp : null,
+      grabByLongPress ? (d) => _onMove(d.localPosition) : null,
+      onLongPressEnd: grabByLongPress ? (_) => _onUp() : null,
+      onLongPressCancel: grabByLongPress ? _onUp : null,
       child: Stack(
         fit: StackFit.passthrough,
         children: <Widget>[
@@ -542,9 +633,8 @@ class _FabricEffectState extends State<FabricEffect>
       ),
     );
 
-    // Shrink-to-vanish overlay. Cheap to keep in the tree: at value == 1.0
-    // (the default, untouched state) this is a plain, unscaled, fully
-    // opaque passthrough.
+    // Collapse / crumple-fade overlay. At value == 1.0 (untouched state)
+    // this is a plain passthrough.
     return AnimatedBuilder(
       animation: _transitionController,
       builder: (BuildContext context, Widget? child) {
@@ -552,7 +642,11 @@ class _FabricEffectState extends State<FabricEffect>
         if (t >= 1.0) return child!;
         return Opacity(
           opacity: t.clamp(0.0, 1.0),
-          child: Transform.scale(scale: t, child: child),
+          child: Transform.scale(
+            scale: t,
+            alignment: _transitionOrigin,
+            child: child,
+          ),
         );
       },
       child: content,
