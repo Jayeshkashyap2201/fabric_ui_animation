@@ -1,7 +1,9 @@
 name: fabric_ui_animation
 description: Cloth-like UI effects for Flutter - grab, stretch, tear, crumple, drop the pins, and turn pages like a book.
-version: 0.2.0
-publish_to: none
+version: 1.1.0
+
+repository: https://github.com/Jayeshkashyap2201/fabric_ui_animation
+homepage: https://pub.dev/packages/fabric_ui_animation
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -15,5 +17,3 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
-
-flutter:

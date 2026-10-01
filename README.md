@@ -1,50 +1,133 @@
-# Fabric UI Animation
+# 🧵 Fabric UI Animation
 
-A 3D cloth physics simulation package for Flutter. Transform any rigid UI widget into a flexible, physical piece of fabric that you can grab, pull, stretch, and tear in real-time using Verlet integration and dynamic lighting!
+A physics-based 3D fabric and cloth animation package for Flutter.
 
-## 🔗 Repository
-* **GitHub:** [https://github.com/Jayeshkashyap2201/fabric_ui_animation](https://github.com/Jayeshkashyap2201/fabric_ui_animation)
+Transform ordinary Flutter widgets into interactive, physical surfaces that users can **grab, pull, stretch, crumple, tear, and turn** in real-time.
+
+Built with **Verlet integration, spring-based physics, dynamic lighting, gesture interaction, and customizable animation effects**.
+
+---
 
 ## ✨ Features
-* **3D Verlet Integration Physics:** Simulates nodes and springs for realistic cloth movement, gravity, and wrinkles.
-* **Dynamic Lighting & Shading:** Calculates per-vertex normals for real-time 3D surface shading and shadows.
-* **Tearing & Pinned Edges:** Pull hard to create natural holes, rips, and tension-based breaks in the cloth sheet.
-* **Smooth Touch Interaction:** Smooth falloffs for natural dents and multi-node finger grabs.
-* **Fabric Controller:** Programmatically trigger actions like peeling/releasing pins (`releasePins()`) or resetting (`reset()`).
 
-## 🚀 Getting Started
+### 🧵 3D Cloth Physics
 
-Add this package to your project's `pubspec.yaml`:
+- Verlet integration based physics simulation
+- Node and spring-based cloth structure
+- Real-time fabric deformation
+- Gravity and physical movement
+- Natural wrinkles and surface deformation
+- Configurable physics behavior
 
-yaml
+### ✋ Interactive Fabric
+
+Interact with the fabric directly using touch gestures:
+
+- Grab
+- Pull
+- Stretch
+- Drag
+- Crumple
+- Release
+- Tear
+
+Smooth falloff calculations allow multiple nearby nodes to react naturally to finger interaction.
+
+### ✂️ Tearing & Pin System
+
+The fabric can dynamically respond to tension:
+
+- Tension-based tearing
+- Natural holes and ripped edges
+- Pinned fabric edges
+- Pin break interactions
+- Programmatic pin release
+- Fabric reset support
+
+### 📄 Interactive Page Curl
+
+Turn pages like a physical sheet of paper/fabric.
+
+- Interactive page curl
+- Gesture-based page turning
+- Forward and backward page transitions
+- Physics-based page deformation
+- Configurable curl behavior
+- Smooth page transitions
+
+### 🧻 Crumple & Uncrumple
+
+Create realistic fabric-like transitions with configurable crumpling:
+
+- Crumple animation
+- Uncrumple animation
+- Adjustable crumple strength
+- Twist
+- Bunching
+- Fade effects
+- Custom animation duration
+
+### 📱 Fabric Bottom Navigation
+
+A custom bottom navigation experience with fabric-style transitions.
+
+- Animated bottom navigation
+- Fabric crumple effect
+- Smooth page switching
+- Physics-based transitions
+- Active and inactive navigation states
+- Customizable colors
+
+### 💡 Dynamic Lighting & Shading
+
+Give the fabric a physical 3D appearance using dynamic lighting.
+
+- Per-vertex normal calculations
+- Dynamic surface shading
+- Shadows
+- Highlights
+- Glint effects
+- Configurable lighting intensity
+
+### 🔊 Sound Effects
+
+Fabric interactions can be synchronized with custom sound effects.
+
+Available callbacks include:
+
+- `onGrab`
+- `onTear`
+- `onPinBreak`
+- `onCrumple`
+- `onPinsReleased`
+- `onPageTurn`
+
+This allows you to create a more immersive physical interaction.
+
+### 🎛️ Customization
+
+Customize the animation according to your UI:
+
+- Animation duration
+- Crumple strength
+- Twist
+- Bunching
+- Fade fraction
+- Shadow color
+- Highlight color
+- Shadow opacity
+- Highlight opacity
+- Glint strength
+- Background color
+- Active/inactive colors
+- Physics transitions
+
+---
+
+# 🚀 Installation
+
+Add `fabric_ui_animation` to your `pubspec.yaml`:
+
+```yaml
 dependencies:
-  fabric_ui_animation: ^1.0.0
-💻 How to UseWrap any widget inside FabricEffect to bring it to life!Dartimport 'package:flutter/material.dart';
-import 'package:fabric_ui_animation/fabric_ui_animation.dart';
-
-class FabricExample extends StatelessWidget {
-  const FabricExample({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Fabric UI Demo')),
-      body: Center(
-        child: FabricEffect(
-          child: Container(
-            width: 300,
-            height: 400,
-            color: Colors.deepPurple,
-            child: const Center(
-              child: Text(
-                'Pull & Stretch Me!',
-                style: TextStyle(color: Colors.white, fontSize: 20),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-⚠️ Important NotesOpaque Background: Ensure your wrapped child widget has an opaque background (e.g., using a solid color Container), otherwise transparent areas might appear during screen capture.Scrollable Views: If used inside scrollable elements, set startOnLongProfile: true (or startOnLongPress: true) to prevent pan gesture conflicts with vertical scrolling.📄 LicenseThis project is licensed under the MIT License - see the LICENSE file for details.👨‍💻 Author / DeveloperDeveloped with ❤️ by Jayesh KashyapEmail: jayeshkashyap2201@gmail.com   GitHub: https://github.com/Jayeshkashyap2201   
+  fabric_ui_animation: ^1.1.0

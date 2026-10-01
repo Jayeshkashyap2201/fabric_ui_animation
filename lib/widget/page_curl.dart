@@ -233,7 +233,11 @@ class PageCurlPainter extends CustomPainter {
     // Canonical geometry: the fold sweeps from the right edge to the left.
     // For the left edge everything is mirrored on the way to the screen.
     final bool flipX = edge == CurlEdge.left;
-    final double r = options.rollRadius;
+    // Real paper doesn't lift into a full-size roll instantly - the curl
+    // starts tight (near zero) and grows to its full radius over the first
+    // slice of the turn. Without this, the very first frames show a
+    // constant-width shadow/roll snapping in abruptly instead of easing in.
+    final double r = math.max(4.0, options.rollRadius * _smooth(0.02, 0.18, progress));
     final double a = p.angle ?? options.curlAngle;
     final double ca = math.cos(a);
     final double sa = math.sin(a);

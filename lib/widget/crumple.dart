@@ -1,7 +1,5 @@
 import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
-
 import 'fabric_effect.dart' show FabricController;
 import '../physics.dart';
 import 'trigger.dart';
